@@ -1,43 +1,56 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="id"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Kamera Wajah - SDN 004 Bontang Barat</title>
-<style>body{margin:0;font-family:Arial,sans-serif;background:#f3f6fa;color:#233650;display:flex;justify-content:center}main{max-width:480px;width:100%;padding:22px}h2{font-size:22px}video{width:100%;background:#18202b;aspect-ratio:4/3;object-fit:cover;border-radius:16px;transform:scaleX(-1)}p{line-height:1.5}#status{background:white;border-radius:10px;padding:15px;margin-top:14px}button{padding:14px;border:0;border-radius:10px;background:#187ee9;color:white;font-weight:bold;width:100%;margin-top:14px}button:disabled{background:#9da8ba}</style>
-</head><body><main><h2>Verifikasi Foto Wajah</h2><p>Izinkan kamera depan. Foto akan diambil otomatis setelah 3 detik, tanpa mengambil foto dari galeri.</p>
-<video id="v" autoplay muted playsinline></video><p id="status">Meminta izin kamera…</p><button id="retry" hidden>Coba Kamera Lagi</button>
+<title>Kamera Wajah · SDN 004 Bontang Barat</title>
+<style>
+*{box-sizing:border-box}body{margin:0;font:15px system-ui,Arial;background:#eef3f8;color:#152a40;padding:18px}main{max-width:600px;margin:0 auto;background:white;border-radius:16px;padding:20px;box-shadow:0 10px 30px #16253816}h1{font-size:21px;margin:0 0 10px}p{line-height:1.5;color:#52677c}video{width:100%;aspect-ratio:4/3;object-fit:cover;border-radius:14px;background:#101d2d;transform:scaleX(-1)}button{border:0;background:#147fc6;color:white;border-radius:9px;padding:12px 17px;margin:8px 8px 0 0;font-size:15px;cursor:pointer}button[disabled]{opacity:.5}#status{margin:14px 0;padding:12px;border-radius:9px;background:#f3f7fa}#status.error{color:#b91c1c;background:#fff3f4}small{display:block;margin:12px 0;color:#65788c}
+</style></head>
+<body><main><h1>Kamera Wajah SDN 004 Bontang Barat</h1>
+<p>Halaman HTTPS terpisah untuk membuka kamera depan ketika Google Apps Script membatasi akses kamera. Foto akan dikirim langsung ke aplikasi presensi melalui tab asal, bukan disimpan ke galeri.</p>
+<video id="video" autoplay playsinline muted></video>
+<div id="status">Menyiapkan kamera...</div>
+<button id="start" type="button">Aktifkan Kamera / Coba Lagi</button>
+<button id="capture" type="button" disabled>Ambil &amp; Kirim Foto</button>
+<small>Chrome dapat meminta izin kamera sekali pada domain halaman ini. Jangan menutup halaman presensi saat memotret.</small></main>
 <script>
 'use strict';
-const v=document.getElementById('v'), statusEl=document.getElementById('status'), retry=document.getElementById('retry');
-let stream=null, attempt=0;
-const nonce=new URL(location.href).searchParams.get('nonce');
-async function capture(){
- const id=++attempt;retry.hidden=true;
- if(!nonce||!/^([a-f0-9]{48})$/.test(nonce)||!window.opener){statusEl.textContent='Halaman ini hanya untuk ceklok melalui aplikasi absensi.';return;}
- try{
-  if(!navigator.mediaDevices?.getUserMedia)throw Error('Kamera tidak tersedia di browser ini.');
-  if(stream)stream.getTracks().forEach(t=>t.stop());
-  statusEl.textContent='Mengaktifkan kamera depan…';
-  const s=await navigator.mediaDevices.getUserMedia({audio:false,video:{facingMode:{ideal:'user'},width:{ideal:640},height:{ideal:480}}});
-  if(id!==attempt){s.getTracks().forEach(t=>t.stop());return;}
-  stream=s;v.srcObject=s;await v.play();
-  statusEl.textContent='Kamera aktif. Arahkan wajah. Mengambil foto dalam 3 detik…';
-  await new Promise(r=>setTimeout(r,3000));
-  if(id!==attempt)return;
-  if(!v.videoWidth)throw Error('Kamera belum siap.');
-  const canvas=document.createElement('canvas');canvas.width=640;canvas.height=Math.round(v.videoHeight*640/v.videoWidth);
-  canvas.getContext('2d').drawImage(v,0,0,canvas.width,canvas.height);
-  const jpeg=canvas.toDataURL('image/jpeg',.72);
-  // Kirim foto ke halaman pemanggil. Tidak ada unggahan/pemilihan file dari galeri.
-  window.opener.postMessage({type:'SDN004_CAMERA_CAPTURE',nonce,image:jpeg},'*');
-  statusEl.textContent='Foto terkirim ke aplikasi. Kembali ke halaman absensi.';
-  stream.getTracks().forEach(t=>t.stop());stream=null;
-  setTimeout(()=>window.close(),400);
- }catch(err){
-   if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
-   statusEl.textContent='Kamera belum dapat dibuka: '+(err?.message||String(err))+'. Periksa izin situs kamera ini.';
-   retry.hidden=false;
+const query=new URLSearchParams(location.search),req=query.get('req'),returnOrigin=query.get('returnOrigin');
+const $=id=>document.getElementById(id);
+let stream=null,captured=false;
+function status(msg,error){$('status').textContent=msg;$('status').classList.toggle('error',!!error)}
+function stop(){if(stream){stream.getTracks().forEach(t=>t.stop());stream=null}}
+async function startCamera(){
+ stop();captured=false;$('capture').disabled=true;
+ if(!req||!returnOrigin||!/^https:\/\/[a-z0-9.-]+(?::\d+)?$/i.test(returnOrigin)){
+   status('Tautan kamera harus dibuka dari aplikasi presensi.',true);return;
  }
+ try{
+   if(!navigator.mediaDevices?.getUserMedia)throw Error('Perangkat tidak mendukung kamera HTTPS.');
+   status('Meminta izin kamera depan...');
+   stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'user'},width:{ideal:720},height:{ideal:540}},audio:false});
+   const v=$('video');v.srcObject=stream;await v.play();
+   if(v.readyState<2)await new Promise(resolve=>{v.addEventListener('loadeddata',resolve,{once:true});setTimeout(resolve,5000)});
+   if(!v.videoWidth||!v.videoHeight)throw Error('Kamera belum menghasilkan gambar');
+   $('capture').disabled=false;status('Kamera aktif. Foto akan diambil otomatis...');
+   setTimeout(()=>{if(stream&&!captured)takeAndSend()},1200);
+ }catch(e){const detail='Kamera gagal: '+(e.message||e);status(detail+'. Izinkan kamera untuk domain ini, lalu tekan Coba Lagi.',true);try{if(window.opener&&req&&returnOrigin)window.opener.postMessage({type:'SDN004_CAMERA',req,error:detail},returnOrigin)}catch(err){}stop()}
 }
-retry.addEventListener('click',capture);
-window.addEventListener('pagehide',()=>{if(stream)stream.getTracks().forEach(t=>t.stop());});
-capture();
-</script></main></body></html>
+function takeAndSend(){
+ if(!stream||captured)return;
+ try{
+  const v=$('video'),canvas=document.createElement('canvas');
+  const w=Math.min(v.videoWidth,720);if(!w||!v.videoHeight)throw Error('Gambar kamera belum siap');
+  canvas.width=w;canvas.height=Math.round(w*v.videoHeight/v.videoWidth);
+  const ctx=canvas.getContext('2d');ctx.translate(canvas.width,0);ctx.scale(-1,1);ctx.drawImage(v,0,0,canvas.width,canvas.height);
+  const image=canvas.toDataURL('image/jpeg',.76);
+  if(image.length>7500000)throw Error('Foto terlalu besar');
+  if(!window.opener)throw Error('Tab aplikasi presensi tidak terhubung. Buka kamera dari tombol di aplikasi.');
+  captured=true;status('Foto berhasil diambil. Mengirim ke aplikasi...');
+  window.opener.postMessage({type:'SDN004_CAMERA',req,image},returnOrigin);
+  stop();setTimeout(()=>{status('Foto dikirim. Jika tab ini tidak tertutup, kembali ke aplikasi presensi.');window.close()},450);
+ }catch(e){status('Pengambilan foto gagal: '+e.message,true)}
+}
+$('start').addEventListener('click',startCamera);
+$('capture').addEventListener('click',takeAndSend);
+window.addEventListener('beforeunload',stop);
+startCamera();
+</script></body></html>
